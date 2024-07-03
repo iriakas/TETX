@@ -1,0 +1,194 @@
+===ticket 1 ===
+
+line vty 0 
+password cisco
+login
+enable password cisco
+
+===ticket 3 ===
+
+interface vlan 1
+no dhcpd address 192.168.1.5-192.168.1.36 inside
+ip address 192.168.2.1 255.255.255.0
+dhcpd address 192.168.2.5-192.168.2.36 inside
+
+vlan 3
+nameif VLAN3
+int vlan 3
+ip address 192.168.3.1 255.255.255.0
+dhcpd address 192.168.2.5-192.168.2.36 VLAN3
+enable dhcp VLAN3
+int e0/1
+switchport access vlan 3
+
+access-list OUTSIDE extended permit icmp any any echo
+access-list OUTSIDE extended permit icmp any any echo-reply
+access-list OUTSIDE extended permit icmp any any unreachable
+
+class-map inspection_default
+ match default-inspection-traffic
+
+policy-map global_policy
+ class inspection_default
+  inspect icmp 
+
+service-policy global_policy global
+
+object network OBJ_NAT_LAN
+subnet 192.168.1.0 255.255.255.0
+nat (inside,outside) dynamic interface
+
+route inside 192.168.10.0 255.255.255.0 192.168.1.2 1
+route outside 1.12.5.0 255.255.255.0 1.12.5.11 1
+
+===ticket 5 ===
+
+aaa new-model
+aaa authentication login default local
+username Den privilege 15 password P@ssword
+
+line vty 0 4
+enable password P@ssword
+login
+exit
+
+===ticket 9 ===
+
+R1
+
+clock set 22:10:00 dec 8 2024
+conf t
+ntp master 1
+--------------------------
+R2
+
+ntp server 192.168.10.1
+
+===ticket 10 === - не проверенно
+
+interface GigabitEthernet0/0
+ip address 192.168.1.1 255.255.255.0
+interface GigabitEthernet0/1
+ip address 192.168.2.1 255.255.255.0
+
+access-list 100 permit ip host 192.168.1.2 any
+
+interface GigabitEthernet0/0
+ip access-group 100 in
+
+ip flow-export destination 192.168.1.3 9996
+ip flow-export version 5
+ip flow-export source GigabitEthernet0/1
+interface GigabitEthernet0/0
+ip route-cache flow
+exit
+interface GigabitEthernet0/1
+ip route-cache flow
+exit
+
+show access-lists
+show ip interface GigabitEthernet0/0
+show ip cache flow
+
+===ticket 11 ===
+
+hostname rodik-router1
+ip domain-name rodik-router1.com
+crypto key generate rsa
+1024
+line vty 5 15
+transport input ssh
+login local
+exit
+username USER privilege 0
+username local_administrator privilege 15 password p@ssw0rd
+
+===ticket 15 ===
+
+hostname rodik-ASA
+aaa authentication ssh console LOCAL
+ssh 192.168.1.1 255.255.255.255 inside
+username local_administrator password p@ssw0rd privilege 15
+
+access-list OUTSIDE extended permit icmp any any echo
+access-list OUTSIDE extended permit icmp any any echo-reply
+access-list OUTSIDE extended permit icmp any any unreachable
+class-map inspection_default
+match default-inspection-traffic
+
+policy-map global_policy
+class inspection_default
+inspect icmp
+
+service-policy global_policy global
+
+===ticket 16 ===
+
+hostname rodik-switch2
+ip domain-name rodik-switch2.com
+crypto key generate rsa
+1024
+line vty 5 15
+transport input ssh
+login local
+exit
+username USER privilege 0
+username local_administrator privilege 15 password p@ssw0rd
+
+===ticket 17 ===
+
+aaa new-model
+aaa authentication login default local
+username Den privilege 15 password P@ssword
+
+line vty 0 4
+enable password P@ssword
+login
+exit
+
+===ticket 18 ===
+
+interface Tunnel0
+ip address 172.16.88.2 255.255.255.0
+
+tunnel source serial1/1
+tunnel destination 10.1.1.1
+
+ip route 10.1.1.0 255.255.255.252 10.2.2.2
+----------------------------------
+interface Tunnel0
+ip address 172.16.88.1 255.255.255.0
+
+tunnel source serial1/0
+tunnel destination 10.2.2.1
+
+ip route 10.2.2.0 255.255.255.252 10.1.1.2
+
+===ticket 22 ===
+
+sysctl net.ipv4.ip_forward=1
+
+sudo apt install iproute2
+sudo ip tunnel add gre1 mode gre remote 10.0.0.1 local 10.0.0.10 ttl 255
+sudo ip addr add 192.168.2.1/24 dev gre1
+sudo ip link set gre1 up
+
+sudo apt install iproute2
+sudo ip tunnel add gre1 mode gre remote 10.0.0.10 local 10.0.0.1 ttl 255
+sudo ip addr add 192.168.2.2/24 dev gre1
+sudo ip link set gre1 up
+
+===ticket 23 ===
+
+sudo apt install openssh-server
+sudo nano /etc/ssh/sshd_config 
+
+Port 2233 
+addressFamily any 
+PermitRootLogin yes 
+PubkeyAuthentication yes 
+PasswordAuthentication yes 
+PermitEmptyPasswords yes 
+
+sudo systemctl start ssh 
+sudo systemctl enable ssh 
