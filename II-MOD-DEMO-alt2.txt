@@ -1,0 +1,728 @@
+
+SSH
+
+apt-get install openssh-server
+
+/etc/openssh/sshd_config
+
+Port 2024
+MaxAuthTries 2
+PasswordAuthentication yes
+Banner /etc/openssh/bannermotd
+AllowUsers  sshuser
+
+systemctl restart sshd
+
+
+
+
+hostnamectl set-hostname <FQDN>; exec bash
+useradd sshuser -u 1010
+passwd sshuser
+usermod -aG wheel sshuser
+
+/etc/sudoers
+sshuser ALL=(ALL) NOPASSWD:ALL
+
+
+DNS
+
+apt install dnsmasq
+systemctl enable dnsmasq
+
+/etc/dnsmasq.conf
+
+port-53 
+bogus-priv
+domain-needed 
+expand-hosts
+localise-queries 
+
+bind-interfaces
+
+host-record-au-team.irpo,192.168.208.2 
+host-record-hq-srv.au-team.irpo,192.168.100.2
+host-record-hq-cli,192.168.100.76
+cname=noodle.au-team.irpo,192.168.208.2 
+cname=wiki.au-team.irpo, hq-rtr.au-tean. irpo
+
+server=/au-team.irpo/192.168.208.2 
+listen-address=192.168.100.2
+domain=au-team.irpo
+server 10.0.5.1
+
+
+IP TABLES
+
+
+iptables -t nat -A POSTROUTING -o ens19 -j MASQUERADE 
+iptables-save > /etc/sysconfig/iptables
+
+apt-get install dhcp
+
+1. Настройте доменный контроллер Samba на машине BR-SRV.
+	+• Создайте 5 пользователей для офиса HQ: имена пользователей
+	формата user№.hq. Создайте группу hq, введите в эту группу созданных
+	пользователей
+	
+	+• Введите в домен машину HQ-CLI
+	
+	+• Пользователи группы hq имеют право аутентифицироваться на
+	клиентском ПК
+	
+	?• Пользователи группы hq должны иметь возможность повышать
+	привилегии для выполнения ограниченного набора команд: cat, grep, id.
+	Запускать другие команды с повышенными привилегиями пользователи
+	группы не имеют права
+
+	-• Выполните импорт пользователей из файла users.csv. Файл будет
+	располагаться на виртуальной машине BR-SRV в папке /opt
+	
+	BR-SRV:
+	
+	apt-get install samba-DC
+
+	control bind-chroot disabled
+	nano /etc/bind/named.conf	
+		include "/var/lib/samba/bind-dns/named.conf";
+
+! Может быть такое, что ее прийдется закомментить, когда не дает рестартнуть bind
+		
+	domainname au-team.irpo //возможно не надо
+
+	rm -f /etc/samba/smb.conf 
+	rm -rf /var/lib/samba 
+	rm -rf /var/cache/samba 
+	mkdir -p /var/lib/samba/sysvol 
+		
+	samba-tool domain provision
+		Realm [AU-TEAM.IRPO]:
+		Domain [AU-TEAM]:
+		Server Role () [dc]:
+		DNS backend () [SAMBA_INTERNAL]: BIND9_DLZ
+		Administrator password: P@ssw0rd
+		Retry password: P@ssw0rd
+		
+	systemctl restart samba-tool
+	systemctl restart bind
+	
+! Если не дает рестарт, то заходим в /etc/bind/ddns.conf и комментим, что там есть
+
+	//systemctl restart bind-chroot
+
+	cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+	
+	samba-tool domain info 127.0.0.1
+
+	//nano /etc/syconfig/bind
+		EXTRAOPTIONS ="-4"
+
+	//nano /etc/sysconfig/network
+		HOSTNAME=BR-SRV.au-team.irpo
+
+	nano /etc/bind/options.conf
+		listen-on {any;};
+		allow-query {any;};
+		include "/etc/bind/resolvconf-options.conf"; //возможно не надо
+
+	host -t SRV _kerberos._udp.au-team.irpo.
+	host -t SRV _ldap._tcp.au-team.irpo.
+	host -t A HQ-SRV.au-team.irpo
+	
+	kinit administrator@AU-TEAM.IRPO
+	
+	nano /etc/resolv.conf
+		nameserver 10.10.10.2 //HQ-SRV
+
+	HQ-CLI:
+	Указываем dns сервер машину BR-SRV и домен поиска:
+	
+	nano /etc/resolv.conf
+		nameserver 10.10.30.2
+		search au-team.irpo
+		
+	acc
+		>Режим эксперта>Раздел «Пользователи»>Аутентификая
+			Домен Active Directory
+			Домен: au-team.irpo
+			Рабочая группа: au-team
+			Имя компьютера: HQ-CLI
+	
+	Вводим administrator и пароль P@ssw0rd
+	
+! Если не дает зайти в домен, даже после того, как прописал resolv.conf, то
+следует на HQ-RTR в файле /etc/dhcp/dhcpd.conf изменить "domain-name-servers"
+на 10.10.30.2 //BR-SRV
+
+! Перезагружаем машины после чего проверяем resolv.conf, если он не введен, прописываем
+	его и вводим машину в домен еще раз, после чего заходим под administrator.
+
+	klist
+	id
+
+	Создание 5 пользователей user<1-5>.hq
+	
+	apt-get install admc
+	admc
+		>Users>Создать пользователя
+			Имя:			user1.hq
+			Полное имя: 	user1.hq
+			Имя для входа: 	user1.hq
+			Пароль: 		P@ssw0rd
+			+ Пароль не истекает 
+			
+		>Users>Создать группу
+			Имя: 		hq
+			Имя группы: hq
+			
+		>Users>user1.hq>Свойства>Группа>Добавить в группу
+			Классы: 	Группа
+			Искать в: 	au-team
+			>Добавить>hq
+
+! Для того, чтобы после перезагрузки не пришлось каждый раз вводить машину в домен:
+	nano /root/RESOLV.sh
+		search au-team.irpo
+		nameserver 10.10.30.2
+		nameserver 10.10.10.2
+		nameserver 10.0.5.1 //интернет
+		systemctl restart crond.service
+	crontab -e 
+		@reboot	/root/RESOLV.sh
+		
+		
+		
+		
+
+2. Сконфигурируйте файловое хранилище:
+	+• При помощи трёх дополнительных дисков, размером 1Гб каждый, на
+	HQ-SRV сконфигурируйте дисковый массив уровня 5
+	
+	+• Имя устройства – md0, конфигурация массива размещается в файле
+	/etc/mdadm.conf
+	
+	+• Обеспечьте автоматическое монтирование в папку /raid5
+	
+	+• Создайте раздел, отформатируйте раздел, в качестве файловой
+	системы используйте ext4
+	
+	+• Настройте сервер сетевой файловой системы(nfs), в качестве папки
+	общего доступа выберите /raid5/nfs, доступ для чтения и записи для всей сети
+	в сторону HQ-CLI
+	
+	+• На HQ-CLI настройте автомонтирование в папку /mnt/nfs
+	
+	+• Основные параметры сервера отметьте в отчёте
+
+	HQ-SRV:
+
+	lsblk
+	
+	fdisk /dev/sdb
+		g
+		n
+		Enter X3
+		w
+
+	mdadm --create --verbose /dev/md0 -l 5 -n 3 /dev/sdb1 /dev/sdc1 /dev/sdd1
+
+
+	mdadm --detail --scan --verbose >> /etc/mdadm.conf
+
+
+	mkfs.ext4 /dev/md0
+
+
+	mkdir /raid5
+
+	mount /dev/md0 /raid5
+	
+	lsblk -f
+	
+	nano /etc/fstab
+		/dev/md0	/raid5	ext4	defaults	0 0
+
+	df -h
+
+	
+	mkdir /raid5/nfs
+
+	nano /etc/exports
+		/raid5/nfs	10.10.20.1/28(rw,sync,no_root_squash,subtree_check)
+
+	exportfs -a 
+
+	HQ-CLI:
+	
+	mkdir /mnt/nfs
+	
+	mount -t nfs 10.10.10.2:/raid5/nfs /mnt/nfs
+	
+	nano /etc/fstab
+		10.10.10.2:/raid5/nfs	/mnt/nfs	nfs	auto	0 0
+		
+		
+		
+		
+		
+3. Настройте службу сетевого времени на базе сервиса chrony 
+	+• В качестве сервера выступает HQ-RTR 
+	
+	+• На HQ-RTR настройте сервер chrony, выберите стратум 5
+	
+	+• В качестве клиентов настройте HQ-SRV, HQ-CLI, BR-RTR, BR-SRV 
+	
+	Поскольку на HQ-RTR нету chrony, будем устанавливать его на ISP
+	
+	HQ-RTR:
+	apt-get install -y chrony
+	
+	nano /etc/chrony.conf, комментним все и пишем:
+		server 127.0.0.1 iburst prefer
+		hwtimestamp *
+		local stratum 5
+		allow 0/0
+			или лучше:
+			allow 10.10.10.0/26
+			allow 10.10.20.0/28
+			allow 10.10.30.0/27
+		
+	systemctl enable --now chronyd.service
+
+	chronyc tracking | grep Stratum
+	chronyc clients
+	
+	HQ-SRV,BR-SRV,HQ-CLI:
+	apt-get install chrony
+	
+	Также комментим все и пишем: //или комментим только строчки
+	с указанием ntp pool
+	
+	echo server <IP HQ-RTR> iburst prefer >> /etc/chrony.conf
+	systemctl enable --now chronyd
+	chronyc sources
+	
+	
+	
+	
+	
+4. Сконфигурируйте ansible на сервере BR-SRV 
+	+• Сформируйте файл  инвентаря,  в  инвентарь  должны  входить  HQSRV, HQ-CLI, HQ-RTR и BR-RTR 
+	+• Рабочий каталог ansible должен располагаться в /etc/ansible 
+	+• Все  указанные  машины должны  без  предупреждений  и  ошибок отвечать pong на
+	команду ping в ansible посланную с BR-SRV 
+	
+	apt-get install ansible
+	
+	Для того, чтобы заходить на удаленные машины, пользователь на BR-SRV (sshuser and root)
+	должны создать пару ключей закрытого/открытого RSA ключа:
+	
+	Выходим из под root и заходим под sshuser:
+	
+	ssh-keygen -t rsa
+	
+	ls -l /home/sshuser/.ssh
+		id_rsa		//закрытый ключ
+		id_rsa.pub	//открытый ключ
+		
+	Копируем открытый SSH на удаленные устройства:
+	
+	ssh-copy-id -p 2024 sshuser@10.10.10.2
+	ssh-copy-id <markov-hqcli>@10.10.20.2
+	ssh-copy-id net_admin@172.16.0.1
+	ssh-copy-id net_admin@10.10.30.1
+	
+! Необходимо, чтобы sshd работал корректно на всех узлах сети,
+к которым идет передача ssh ключа
+	
+	BR-SRV:
+	Заходим под root:
+	
+	nano /etc/ansible/demo //или можно в /etc/ansible/hosts
+		[HQ]
+		10.10.10.2 ansible_port=2024 ansible_user=sshuser
+		10.10.20.2 ansible_user=markov-hqcli
+		172.16.0.1 ansible_user=net_admin
+		
+		[BR]
+		10.10.30.1 ansible_user=net_admin
+		
+	Возвращаемся на sshuser:
+	
+	ansible all -i /etc/ansible/demo -m ping
+	или
+	ansible -m ping all //если файл ~/hosts
+	
+! Если появляется фиол ошибка с ссылкой на Python, то:
+
+	nano /etc/ansible/ansible.cfg
+		[defaults]
+		interpreter_python=auto_silent
+	
+! Если ругается на (HQ-CLI скорее всего), что python 2.7, то:	
+	nano /etc/ansible/ansible.cfg
+		[defaults]
+		interpreter_python=/usr/bin/puthon3
+		
+		или на HQ-CLI:
+		
+		apt-get remove python2-base //или другой python < 3 версии
+		
+		
+		
+		
+		
+5. Развертывание приложений в Docker на сервере BR-SRV.
+	+• Создайте  в  домашней  директории  пользователя  файл  wiki.yml  для приложения MediaWiki. 
+	
+	+• Средствами docker compose должен создаваться стек контейнеров с приложением MediaWiki и базой данных.
+	
+	+• Используйте два сервиса 
+	
+	+• Основной  контейнер  MediaWiki  должен  называться  wiki  и использовать образ mediawiki
+	
+	+• Файл  LocalSettings.php  с  корректными  настройками  должен находиться в
+	домашней папке пользователя и автоматически монтироваться в образ. 
+	
+	+• Контейнер  с  базой  данных должен  называться  mariadb  и использовать образ mariadb. 
+	
+	+• Разверните 
+	
+	+• Он  должен  создавать  базу  с  названием  mediawiki,  доступную  по стандартному  порту,
+	пользователя  wiki  с  паролем  WikiP@ssw0rd  должен иметь права доступа к этой базе данных 
+	
+	+• MediaWiki должна быть доступна извне через порт 8080.
+	
+	
+	Установка docker и docker compose на BR-SRV:
+	apt-get install docker-ce docker-cli
+	
+	systemctl enable --now docker
+	
+	docker info
+	
+	apt-get install docker-compose
+	
+	Для облегчения создания wiki.yml идем на HQ-CLI:
+	ssh sshuser@10.10.30.2 -p2024
+
+	systemctl disable --now ahttpd //который занимем 8080 порт
+	
+	идем в браузер пишем:
+	mediawiki docker-compose
+	и переходим по ссылке (mediawiki.org) (Docker/Hub - MediaWiki)
+	https://www.mediawiki.org/wiki/Docker/Hub
+	
+	Ищем adding a database server
+	
+	затем:
+	cd /home/sshuser/
+	
+	nano wiki.yml
+		копируем конфигурацию с сайта и изменяем след парметры:
+		ports:
+			- 8080:80 (Порт доступа извне)
+			
+		database:
+			container_name: mariadb (имя контейнера с БД)
+			image: mariadb (образ БД)
+			environment:
+				MYSQL_DATABASE: mediawiki (Имя БД)
+				MYSQL_USER: wiki (Пользователь БД)
+				MYSQL_PASSWORD: WikiP@ssw0rd (Пароль пользователя БД)
+			volumes:
+				- dbvolume:/var/lib/mariadb (Путь хранения volume)
+
+	Создаем отдельный volume для хранения БД:
+	
+	docker volume create dbvolume
+
+	docker volume ls
+	
+	Выполняем сборку и запуск стека контейнеров с приложеннием
+	MediaWiki и базой данных, которая описана в файле wiki.yml:
+	
+	docker compose -f wiki.yml up -d
+	
+	Просмотр списка контейнеров:
+	docker ps
+	
+	Заходим обратно в бразуер и пишем IP BR-SRV:8080:
+	
+	http://10.10.30.2:8080
+	
+	1. Установить 
+	
+	2. Выбираем язык
+	
+	3. Смотрим, чтобы на зеленом фоне была надпись:
+	"Проверка внешней среды была успешно проведена".
+	
+	4. Заполняем:
+	
+	Тип базы данных:
+	mariadb
+	
+	Хост базы данных:
+	mariadb
+	
+	Идентификация этой вики:
+		Имя БД:
+		mediawiki
+	
+	Учетная запись для установки:
+		Имя пользователя БД:
+		wiki
+		
+		Пароль БД:
+		WikiP@ssw0rd
+		
+	5. Ставим галочку
+	
+	6. Вносим сведения:
+	
+	Название вики:
+	Demo-Wiki
+	
+	"То же, что имя вики: Demo-Wiki"
+	
+	Учетная запись администратора:
+		wiki
+		WikiP@ssw0rd
+		demo@demo.demo
+		
+	"Хватит уже, просто установити вики."
+	
+	Будет автоматически скачан файл localSettings.php, передаем его BR-SRV к sshuser:
+	
+	scp -P2024 /home/markov-hqcli/Загрузки/LocalSettings.php sshuser@10.10.30.2:/home/sshsuer
+	//имя может быть другое (не markov-hqcli)
+	
+	Переходим на BR-SRV:
+	
+	nano /home/sshuser/wiki.yml
+		Снимаем комментарий со строчки:
+		- ./LocalSettings.php:/var/www/html/LocalSettings.php
+		
+	Перезапускаем сервисы:
+	
+	docker compose -f wiki.yml stop
+	docker compose -f wiki.yml up -d
+	
+	Проверяем доступ к Wiki 10.10.30.2:8080 на HQ-CLI:
+	Вводим имя wiki пароль WikiP@ssw0rd
+	
+	6.  На  маршрутизаторах сконфигурируйте  статическую  трансляцию портов.
+	+• Пробросьте порт 80 в порт 8080 на BR-SRV на маршрутизаторе BR
+	RTR, для обеспечения работы сервиса wiki 
+	
+	+• Пробросьте порт 2024 в порт 2024 на HQ-SRV на маршрутизаторе HQ-RTR 
+	
+	+• Пробросьте порт 2024 в порт 2024 на BR-SRV на маршрутизаторе BR-RTR 
+	
+	apt-get install nftables
+	
+	BR-RTR:
+	nano /etc/nftables/nftables.nft
+		table inet filter //table inet nat
+		{
+		chain PREROUTING
+			{
+			type nat hook prerouting priority filter;
+			ip daddr 172.16.5.2 tcp dport 80 dnat ip to 10.10.30.2:8080 //для wiki
+			ip daddr 172.16.5.2 tcp dport 2024 dnat ip to 10.10.30.2:2024 //для ssh BR-SRV
+			}
+		}
+		
+	systemctl enable --now nftables
+	
+	Заходим в браузер на HQ-CLI и пишем в поисковой строке:
+	http://172.16.5.2
+	
+	В терминале:
+	ssh sshuser@10.10.30.2 -p2024
+	
+	HQ-RTR:
+	nano /etc/nftables/nftables.nft
+		table inet filter //table inet nat
+		{
+		chain PREROUTING
+			{
+			type nat hook prerouting priority filter;
+			ip daddr 172.16.4.2 tcp dport 2024 dnat ip to 10.10.10.2:2024 //для ssh HQ-SRV
+			}
+		}
+		
+	Также можно с HQ-CLI в терминале:
+	ssh sshuser@172.16.4.2 -p2024
+	
+7. Запустите сервис moodle на сервере HQ-SRV:
+	+• Используйте веб-сервер apache 
+	
+	+• В качестве системы управления базами данных используйте mariadb 
+	
+	+• Создайте базу данных moodledb 
+	
+	+• Создайте пользователя moodle с паролем P@ssw0rd и предоставьте ему права доступа к этой базе данных 
+	
+	+• У пользователя admin в системе обучения задайте пароль P@ssw0rd 
+	
+	+• На  главной  странице  должен  отражаться  номер  рабочего  места  в
+	виде арабской цифры, других подписей делать не надо 
+	
+	• Основные параметры отметьте в отчёте 
+
+------------------------------------------ХУЕТА-------------------------------------------------
+Не понятно надо или нет:
+--------------------------------------------------------------------
+	На время настройки переведем selinux в режим уведомлений:		|
+	nano /etc/selinux/config										|
+		#SELINUX=enforcing											|
+		SELINUX=permissive											|
+																	|
+	Для удобства настройки подключимя к HQ-SRV через ssh с HQ-CLI:	|
+	ssh sshuser@10.10.10.2 -p2024									|
+	su -															|
+																	|
+	apt-get install httpd (httpd2)									|
+	systemctl enable --now httpd (httpd2)							|
+																	|
+	nano /etc/php.ini												|
+	max_input_vars=6000												|
+																	|
+	systemctl restart httpd											|
+	systemctl restart php-fpm										|
+--------------------------------------------------------------------
+
+	apt-get install php8.0 php8.0-mysqlnd php8.0-pdo php8.0-gd php8.0-mbstring php8.0-zip php8.0-intl php8.0-soap
+	apt-get install php8.0-fpm //хз
+	systemctl restart php-fpm
+
+	apt-get install mariadb-server mariadb
+	systemctl enable --now mariadb
+	
+	mysql_secure_installation
+		yes yes (пароль) yes yes yes yes
+
+	mysql -u root -p
+	
+	CREATE DATABASE moodledb DEFAULT CHARACTER SET utf8;
+	CREATE USER moodle@localhost IDENTIFIED BY 'P@ssw0rd';
+	GRANT ALL ON moodledb.* TO 'moodle'@'localhost';
+	flush privileges;
+	quit;
+	
+	systemctl restart mariadb
+
+	Переходим на сайт moodle>Download>.tgz, копируем последнюю версию (ссылку на загрузку)moodle и скачиваем ее в /tmp:
+	wget ПКМ (https://packaging.moodle.org/stable405/moodle-latest-405.tgz) -P /tmp
+
+	cd /tmp
+	
+	tar -xzf /tmp/moodle-latest-405.tgz
+	
+	Перемещаем все файлы из папки moodle в корневую директорию сайта:
+	
+	mv -f /tmp/moodle/{.,}* /var/www/html/LocalSettings
+	
+	chmod 0755 /var/www/html/
+	chown apache:apache /var/www/hmtl/
+	
+	mkdir /var/moodledata //где будет хранится все файлы moodle, размещаемые пользователем
+	
+	chown -R apache:apache /var/moodledata
+	chmod -R 0755 /var/moodledata
+	
+	systemctl restart httpd (httpd2)
+	
+	Затем переходим в браузер и пишем:
+	http://10.10.10.2  //не работает
+	
+------------------------------------------ХУЕТА-------------------------------------------------
+
+	apt-get install installed-db-office-server-moodle
+
+	mysql -uroot -p2024
+	
+! Если не принимает пароль root@localhost, то:
+	mysql 
+	MARIADB> ALTER USER 'root'@'localhost' IDENTIFIED BY 'P@ssw0rd';
+
+	CREATE DATABASE moodledb DEFAULT CHARACTER SET utf8;
+	CREATE USER moodle@localhost IDENTIFIED BY 'P@ssw0rd';
+	GRANT ALL ON moodledb.* TO 'moodle'@'localhost';
+	flush privileges;
+	quit;
+	
+	systemctl restart mariadb
+	
+	nano /etc/php/8.2/apache2-mod.php/php.ini
+		max_input_vars 10000
+	
+	systemctl restart php8.2-fpm
+	systemctl restart httpd2
+	
+	На HQ-CLI:
+	http://10.10.10.2/moodle
+	
+	1. Язык
+	
+	2. Далее
+	
+	3. Тип: MARIADB
+	
+	4.  Название БД:	moodledb
+		Пользователь:	moodle
+		Пароль:			P@ssw0rd
+		
+	5. Продолжить
+	
+! Если бы  не был изменен php.ini была бы красная ошибка
+
+	6. Листаем в самый низ -> Продолжить
+	
+	7. admin P@ssw0rd demo@demo.demo
+	
+	8. Неважные настройки:
+	
+		Полное название сайта: Место 6854698458
+	
+		Краткое название: 6854698458
+	
+							Европа/Москоу
+	   
+		Контакты службы поддерджки: demo@demo.demo
+	
+8. Настройте веб-сервер nginx как обратный прокси-сервер на HQ-RTR 
+	+• При обращении к HQ-RTR по доменному имени moodle.au-team.irpo клиента должно перенаправлять
+	на HQ-SRV на стандартный порт, на сервис moodle 
+	+• При обращении к HQ-RTR по доменному имени wiki. au-team.irpo клиента должно перенаправлять
+	на BR-SRV на порт, на сервис mediwiki 
+	
+	apt-get install nginx
+	
+	systemctl enable --now nginx
+	
+	nano /etc/nginx/nginx.conf
+		в конец перед } добавляем:
+		server {
+			listen 80;
+			server_name <moodle,wiki>.au-team.irpo;
+			
+			location / {
+				proxy_pass http://10.10.<10,30>.2:<80,8080>; //80-HQ; 8080-BR
+			}
+		}
+		
+	systemctl restart nginx
+	
+	Заходим на HQ-CLI и пишем в поисковой строке браузера:
+	http://wiki.au-team.irpo
+	http://moodle.au-team.irpo
+	
+! Если не заходит необходимо в /etc/resolv.conf указать первой строчкой HQ-SRV
+	
+9.  Удобным  способом  установите  приложение  Яндекс  Браузере  для организаций на HQ-CLI 
+	• Установку браузера отметьте в отчёте 
+	
+	apt-get install yandex-browser //так просто
